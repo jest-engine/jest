@@ -4,6 +4,17 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Sable", "lylythechosenone"]
 license = "MIT"
-license-file = "LICENSE"
 
 [dependencies]
+
+[lib]
+name = "jest"
+pathjs = "src/lib.rs"
+test = true
+doctest = true
+bench = true
+doc = true
+plugin = false
+proc-macro = false
+harness = true
+crate-type = ["rlib", "staticlib", "cdylib"]
