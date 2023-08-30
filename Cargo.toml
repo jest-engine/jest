@@ -6,6 +6,9 @@ authors = ["Sable", "lylythechosenone"]
 license = "MIT"
 
 [dependencies]
+portable-atomic = "1.4.3"
+slotmap = "1.0.6"
+tokio = { version = "1.32.0", features = ["sync"] }
 
 [lib]
 name = "jest"
