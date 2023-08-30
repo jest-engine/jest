@@ -20,4 +20,4 @@ doc = true
 plugin = false
 proc-macro = false
 harness = true
-crate-type = ["rlib", "staticlib"]
+crate-type = ["rlib"]
