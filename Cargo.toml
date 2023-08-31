@@ -6,6 +6,14 @@ authors = ["Sable", "lylythechosenone"]
 license = "MIT"
 
 [dependencies]
+portable-atomic = "1.4.3"
+slotmap = "1.0.6"
+tokio = { version = "1.32.0", features = [
+    "sync",
+    "rt",
+    "rt-multi-thread",
+    "macros",
+] }
 
 [lib]
 name = "jest"
@@ -17,4 +25,4 @@ doc = true
 plugin = false
 proc-macro = false
 harness = true
-crate-type = ["rlib", "staticlib", "cdylib"]
+crate-type = ["rlib"]
