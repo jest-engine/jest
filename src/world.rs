@@ -5,21 +5,20 @@ use tokio::sync::RwLock;
 
 use crate::entities::{Entity, EntityId, EntityMut, EntityRef};
 
-
-/// The world is a collection of entities
+/// A world is a collection of [entities](Entity). It manages important
+/// ECS functions, such as queries and systems, and it is the center of your game.
+/// # Usage
+/// Check the docs of [`Entity`] for some examples on how to use a world.
 ///
-/// Allows for the creation, deletion, and retrieval of entities
-
-/// Struct World that holds both entities and a RwLock to allow for many to one reading
-/// and one to many writing. The RwLock will allow simultaneous getting and reading of the 
-/// entities.  but only one writer. it will block all others.
+/// # Performance
+/// Our `World` implementation is designed to be O(1) in every aspect.
+/// It is also designed to scale well to multiple threads.
 pub struct World {
     entities: UnsafeCell<HopSlotMap<EntityId, RwLock<Entity>>>,
     outer: RwLock<()>,
 }
-
 impl World {
-    /// Creates a new world, no parameters
+    /// Creates a new, empty world.
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             entities: UnsafeCell::new(HopSlotMap::with_key()),
@@ -27,15 +26,14 @@ impl World {
         })
     }
 
-    /// Creates a new component to by tracked
-    /// by the world
+    /// Inserts an entity into the world. Use this if you already have an [`Entity`] object.
+    /// Otherwise, use [`EntityBuilder`](crate::entities::builder::EntityBuilder) to create one.
     pub async fn insert(&self, entity: Entity) -> EntityId {
         let _outer = self.outer.write().await;
         unsafe { &mut *self.entities.get() }.insert(RwLock::new(entity))
     }
 
-    /// removes a component from the world,
-    /// takes the id as a parameter
+    /// Removes an entity from the world by ID. Returns the entity if it existed.
     pub async fn remove(&self, id: EntityId) -> Option<Entity> {
         let _outer = self.outer.write().await;
         unsafe { &mut *self.entities.get() }
@@ -43,8 +41,8 @@ impl World {
             .map(|e| e.into_inner())
     }
 
-    /// get an immutable reference to the specified entity
-    /// takes the id as a parameter
+    /// Gets an immutable reference to the entity specified by `id`.
+    /// See the docs of [`EntityRef`] for more information.
     pub async fn get(&self, id: EntityId) -> Option<EntityRef> {
         let _outer = self.outer.read().await;
         let inner = unsafe { &*self.entities.get() }.get(id)?;
@@ -54,8 +52,8 @@ impl World {
         })
     }
 
-    /// get a mutable reference to the specified entity
-    /// takes the id as a parameter
+    /// Gets a mutable reference to the entity specified by `id`.
+    /// See the docs of [`EntityMut`] for more information.
     pub async fn get_mut(&self, id: EntityId) -> Option<EntityMut> {
         let _outer = self.outer.read().await;
         let inner = unsafe { &*self.entities.get() }.get(id)?;
@@ -67,4 +65,7 @@ impl World {
 }
 
 unsafe impl Send for World {}
+/// [`World`] uses a system of [`RwLock`]s for sync interior mutability.
+/// An interested reader can browse the source to understand the implementation
+/// details.
 unsafe impl Sync for World {}

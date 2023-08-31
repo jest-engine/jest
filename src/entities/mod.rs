@@ -1,7 +1,6 @@
 use std::{
     any::{Any, TypeId},
     collections::{hash_map::Entry, HashMap},
-    fmt,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -11,27 +10,26 @@ use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use crate::world::World;
 
-/// imports the builder module for creating entities
+/// A builder for creating entities and adding them to a world.
 pub mod builder;
 
 /// Error types for entity operations
-#[derive(Debug)]
-pub struct AlreadyExists;
-#[derive(Debug)]
-pub struct DoesNotExist;
+pub mod errors {
+    use std::{
+        error::Error,
+        fmt::{self, Display, Formatter},
+    };
 
-/// implementation of Display for error type `AlreadyExists`
-impl fmt::Display for AlreadyExists {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Entity already exists")
+    /// Error type returned from [`Entity::add`]
+    /// A component of this type is already a part of the specified entity.
+    #[derive(Debug)]
+    pub struct AlreadyExists;
+    impl Display for AlreadyExists {
+        fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+            write!(f, "component already exists")
+        }
     }
-}
-
-/// implementation of Display for error type `DoesNotExist`
-impl fmt::Display for DoesNotExist {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Entity does not exist")
-    }
+    impl Error for AlreadyExists {}
 }
 
 new_key_type! {
@@ -39,31 +37,80 @@ new_key_type! {
     pub struct EntityId;
 }
 
-/// Entity is a collection of components
-/// they can be identified by their EntityId
-/// each entity has components that are composed
-/// of a TypeId and a Boxed Any
+/// Entities are the base of ECS. An entity represents a single object in the world.
+/// It is comprised of many components, which are just simple bits of data.
+/// A component can be anything, so long as it satisfies
+/// [`'static`](https://doc.rust-lang.org/rust-by-example/scope/lifetime/static_lifetime.html#trait-bound)
+/// (tl;dr: it has no references) and [`Send`].
+///
+/// # Usage
+/// ## Constructing an entity
+/// In order to create an entity, an [`EntityBuilder`](builder::EntityBuilder) may be used like so:
+/// ```rust
+/// use jest::{world::World, entities::builder::EntityBuilder};
+///
+/// struct Foo {
+///     bar: u32,
+/// }
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let world = World::new();
+///
+///     let mut builder = EntityBuilder::new();
+///     builder.add(Foo {
+///         bar: 42,
+///     }).unwrap();
+///     let entity_id = builder.build(&world).await;
+///
+///     assert!(world.get(entity_id).await.is_some());
+/// }
+/// ```
+/// ## Accessing components
+/// Components can be accessed using the [`Entity::get`] and [`Entity::get_mut`] methods.
+/// They can also be added using the [`Entity::add`] method and removed using the
+/// [`Entity::remove`] method. For example:
+/// ```rust
+/// use jest::{world::World, entities::{Entity, builder::EntityBuilder}};
+///
+/// struct Foo {
+///    bar: u32,
+/// }
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let world = World::new();
+///     // add a new, empty entity
+///     let entity_id = EntityBuilder::new().build(&world).await;
+///     
+///     let mut entity = world
+///         .get_mut(entity_id)
+///         .await
+///         .unwrap();
+///
+///     entity.add(Foo {
+///         bar: 42,
+///     }).unwrap();
+///     let foo = entity.get::<Foo>().unwrap();
+///     assert_eq!(foo.bar, 42);
+///
+///     entity.remove::<Foo>();
+///     assert!(entity.get::<Foo>().is_none());
+/// }
+/// ```
 pub struct Entity {
-    components: HashMap<TypeId, Box<dyn Any>>,
+    components: HashMap<TypeId, Box<dyn Any + Send>>,
     // reference counter to the world
     _world: Arc<World>,
 }
-
-/// implementation of Entity
-/// allows for the creation, deletion, and retrieval of entities
 impl Entity {
-    /// Creates a new entity, takes in a reference to world
-    pub fn new(world: Arc<World>) -> Self {
-        Self {
-            components: HashMap::new(),
-            _world: world,
-        }
-    }
-
-    /// Adds a component of type `T` to the entity
-    pub fn add<T: 'static>(&mut self, component: T) -> Result<(), AlreadyExists> {
+    /// Adds a component of type `T` to the entity, returning [`AlreadyExists`](errors::AlreadyExists) if
+    /// a component of the same type already exists.. `T` must satisfy
+    /// [`'static`](https://doc.rust-lang.org/rust-by-example/scope/lifetime/static_lifetime.html#trait-bound)
+    /// and [`Send`].
+    pub fn add<T: Any + Send>(&mut self, component: T) -> Result<(), errors::AlreadyExists> {
         match self.components.entry(TypeId::of::<T>()) {
-            Entry::Occupied(_) => Err(AlreadyExists),
+            Entry::Occupied(_) => Err(errors::AlreadyExists),
             Entry::Vacant(entry) => {
                 entry.insert(Box::new(component));
                 // TODO: notify world
@@ -72,37 +119,41 @@ impl Entity {
         }
     }
 
-    /// removes the entity from the world
-    pub fn remove<T: 'static>(&mut self) -> Result<(), DoesNotExist> {
-        match self.components.entry(TypeId::of::<T>()) {
-            Entry::Occupied(entry) => {
-                entry.remove();
-                // TODO: notify world
-                Ok(())
-            }
-            Entry::Vacant(_) => Err(DoesNotExist),
-        }
+    /// Removes a component of type `T` from the entity, returning it if it exists.
+    pub fn remove<T: Any + Send>(&mut self) -> Option<T> {
+        self.components
+            .remove(&TypeId::of::<T>())
+            .map(|c| *c.downcast::<T>().unwrap())
     }
 
-    /// get an immutable reference to the specified entity
-    pub fn get<T: 'static>(&self) -> Option<&T> {
+    /// Get an immutable reference to the component of type `T` in this entity,
+    /// if it exists.
+    pub fn get<T: Any + Send>(&self) -> Option<&T> {
         self.components
             .get(&TypeId::of::<T>())
             .map(|c| c.downcast_ref::<T>().unwrap())
     }
 
-    /// get a mutable reference to the specified entity
-    pub fn get_mut<T: 'static>(&mut self) -> Option<&mut T> {
+    /// Get a mutable reference to the component of type `T` in this entity,
+    /// if it exists.
+    pub fn get_mut<T: Any + Send>(&mut self) -> Option<&mut T> {
         self.components
             .get_mut(&TypeId::of::<T>())
             .map(|c| c.downcast_mut::<T>().unwrap())
     }
 }
 
+/// An immutable reference to an entity contained within a world.
+/// This type implements `Deref` for usage as a normal reference.
+///
+/// Beware that holding this reference will block adding and removing
+/// entities in the world, and block writing to this entity.
+/// Be sure to drop it as soon as you're done with it.
 pub struct EntityRef<'a> {
     pub(crate) _outer: RwLockReadGuard<'a, ()>,
     pub(crate) inner: RwLockReadGuard<'a, Entity>,
 }
+/// Get a reference to the underlying `Entity`.
 impl Deref for EntityRef<'_> {
     type Target = Entity;
     fn deref(&self) -> &Self::Target {
@@ -110,16 +161,24 @@ impl Deref for EntityRef<'_> {
     }
 }
 
+/// A mutable reference to an entity contained within a world.
+/// This type implements `Deref` and `DerefMut` for usage as a normal reference.
+///
+/// Beware that holding this reference will block adding and removing
+/// entities in the world, and block accessing this entity.
+/// Be sure to drop it as soon as you're done with it.
 pub struct EntityMut<'a> {
     pub(crate) _outer: RwLockReadGuard<'a, ()>,
     pub(crate) inner: RwLockWriteGuard<'a, Entity>,
 }
+/// Get a reference to the underlying `Entity`.
 impl Deref for EntityMut<'_> {
     type Target = Entity;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
+/// Get a mutable reference to the underlying `Entity`.
 impl DerefMut for EntityMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
